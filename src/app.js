@@ -1,15 +1,43 @@
 'use strict';
 
-// Express app factory — separated from server startup so tests can import it.
+// Express app — separated from server startup so tests can import it.
 
 require('dotenv').config();
+const crypto = require('crypto');
 const express = require('express');
 const { parseIntent } = require('./intentParser');
 const { findProduct } = require('./db');
 const { sendMessage } = require('./whatsapp');
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+
+// Capture raw body buffer for HMAC verification before JSON parsing
+app.use(express.json({
+	limit: '1mb',
+	verify: (req, _res, buf) => { req.rawBody = buf; }
+}));
+
+/**
+ * verifyMetaSignature
+ * Returns true only if X-Hub-Signature-256 matches HMAC-SHA256(rawBody, APP_SECRET).
+ * Uses timing-safe comparison to prevent timing attacks.
+ */
+function verifyMetaSignature(req) {
+	const secret = process.env.WHATSAPP_APP_SECRET;
+	if (!secret) return false;
+
+	const sig = req.headers['x-hub-signature-256'];
+	if (!sig || !sig.startsWith('sha256=')) return false;
+
+	const expected = 'sha256=' + crypto
+		.createHmac('sha256', secret)
+		.update(req.rawBody)
+		.digest('hex');
+
+	if (sig.length !== expected.length) return false;
+
+	return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+}
 
 // GET /webhook - Meta verification endpoint
 app.get('/webhook', (req, res) => {
@@ -28,6 +56,11 @@ app.get('/webhook', (req, res) => {
 
 // POST /webhook - Handle incoming WhatsApp messages
 app.post('/webhook', async (req, res) => {
+	if (!verifyMetaSignature(req)) {
+		return res.sendStatus(403);
+	}
+
+	// Acknowledge receipt immediately to comply with Meta's 5s rule
 	res.sendStatus(200);
 
 	try {
@@ -71,10 +104,10 @@ app.post('/webhook', async (req, res) => {
 		}
 
 		if (intent === 'availability') {
-			const msg = found.stock > 0
+			const statusMsg = found.stock > 0
 				? `${found.name} is in stock with ${found.stock} units available.`
 				: `${found.name} is currently out of stock.`;
-			await sendMessage(from, msg);
+			await sendMessage(from, statusMsg);
 			return;
 		}
 	} catch (err) {
