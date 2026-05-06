@@ -52,4 +52,15 @@ describe('parseIntent', () => {
 		const result = parseIntent('hello there how are you today');
 		expect(result.intent).toBeNull();
 	});
+
+	it('prefers price when both price and availability keywords appear', () => {
+		// "What is the price of Widget A? Is it in stock?" — user is asking about price primarily
+		const { intent } = parseIntent('What is the price of Widget A? Is it in stock?');
+		expect(intent).toBe('price');
+	});
+
+	it('still returns availability when only availability keywords appear', () => {
+		const { intent } = parseIntent('Do you have Widget B available?');
+		expect(intent).toBe('availability');
+	});
 });
