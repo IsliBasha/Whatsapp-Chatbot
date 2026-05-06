@@ -5,6 +5,7 @@
 require('dotenv').config();
 const crypto = require('crypto');
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { parseIntent } = require('./intentParser');
 const { findProduct } = require('./db');
 const { sendMessage } = require('./whatsapp');
@@ -54,8 +55,16 @@ app.get('/webhook', (req, res) => {
 	}
 });
 
+const webhookLimiter = rateLimit({
+	windowMs: 60_000,
+	max: Number(process.env.RATE_LIMIT_MAX || 60),
+	standardHeaders: true,
+	legacyHeaders: false,
+	message: { error: 'Too many requests, please try again later.' }
+});
+
 // POST /webhook - Handle incoming WhatsApp messages
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', webhookLimiter, async (req, res) => {
 	if (!verifyMetaSignature(req)) {
 		return res.sendStatus(403);
 	}
