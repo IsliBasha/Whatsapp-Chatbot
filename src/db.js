@@ -8,6 +8,7 @@
 require('dotenv').config();
 const path = require('path');
 const ExcelJS = require('exceljs');
+const { searchProducts } = require('./search');
 
 const PRODUCTS_FILE = process.env.PRODUCTS_FILE
 	? path.resolve(process.env.PRODUCTS_FILE)
@@ -23,6 +24,43 @@ const COLUMN_ALIASES = {
 
 /** @type {{ name: string, price: number, stock: number }[]} */
 let products = [];
+let _ready = false;
+let _lastReloadedAt = null;
+
+function isReady() { return _ready; }
+function productCount() { return products.length; }
+function getLastReloadedAt() { return _lastReloadedAt; }
+
+/**
+ * swapProducts
+ * Atomically replaces the in-memory catalogue.
+ * Rejects empty input and filters out invalid-shaped rows.
+ *
+ * @param {{ name: string, price: number, stock: number }[]} newList
+ */
+async function swapProducts(newList) {
+	if (!newList || newList.length === 0) {
+		console.error('swapProducts: rejected empty list — existing catalogue preserved');
+		return;
+	}
+
+	const valid = [];
+	for (const item of newList) {
+		const name = typeof item.name === 'string' ? item.name.trim() : '';
+		const price = Number(item.price);
+		const stock = Number(item.stock);
+		if (!name || item.price == null || item.stock == null || !isFinite(price) || !isFinite(stock)) {
+			console.warn(`swapProducts: skipping invalid row — ${JSON.stringify(item)}`);
+			continue;
+		}
+		valid.push({ name, price, stock });
+	}
+
+	products = valid;
+	_ready = true;
+	_lastReloadedAt = new Date().toISOString();
+	console.log(`swapProducts: catalogue updated — ${products.length} products`);
+}
 
 function normalizeHeader(h) {
 	const lower = String(h || '').toLowerCase().trim();
@@ -63,6 +101,7 @@ async function readRowsXls(filePath) {
 }
 
 async function loadProducts() {
+	_ready = false;
 	const ext = path.extname(PRODUCTS_FILE).toLowerCase();
 
 	let parsed;
@@ -99,23 +138,24 @@ async function loadProducts() {
 		if (name) loaded.push({ name, price, stock });
 	}
 
-	products = loaded;
+	await swapProducts(loaded);
 	console.log(`Loaded ${products.length} products from ${PRODUCTS_FILE}`);
 }
 
 /**
  * findProduct
- * Case-insensitive substring search against the in-memory product list.
+ * Three-pass search: exact substring → Fuse.js fuzzy → word-by-word scoring.
  *
  * @param {string} name
  * @returns {Promise<{ name: string, price: number, stock: number } | null>}
  */
 async function findProduct(name) {
 	if (!name || typeof name !== 'string') return null;
-	const query = name.trim().toLowerCase();
-	return products.find(p => p.name.toLowerCase().includes(query)) || null;
+	return searchProducts(products, name);
 }
 
-loadProducts().catch(err => console.error('Unexpected error loading products:', err.message));
+// NOTE: loadProducts() is intentionally NOT called here.
+// Call it explicitly from the server entrypoint (index.js) before app.listen(),
+// so the server never accepts traffic before the product catalogue is ready.
 
-module.exports = { findProduct, loadProducts };
+module.exports = { findProduct, loadProducts, swapProducts, isReady, productCount, getLastReloadedAt };
