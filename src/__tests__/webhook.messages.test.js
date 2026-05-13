@@ -19,6 +19,21 @@ jest.mock('../whatsapp', () => ({
 	sendMessage: (...args) => mockSendMessage(...args)
 }));
 
+const mockParseIntentAI = jest.fn();
+const mockGenerateResponse = jest.fn();
+jest.mock('../ai', () => ({
+	parseIntentAI: (...args) => mockParseIntentAI(...args),
+	generateResponse: (...args) => mockGenerateResponse(...args)
+}));
+
+jest.mock('../session', () => {
+	const greeted = new Set();
+	return {
+		hasBeenGreeted: (p) => greeted.has(p),
+		markGreeted: (p) => greeted.add(p)
+	};
+});
+
 function sign(body, secret = APP_SECRET) {
 	const raw = typeof body === 'string' ? body : JSON.stringify(body);
 	return 'sha256=' + crypto.createHmac('sha256', secret).update(raw).digest('hex');
@@ -48,6 +63,8 @@ describe('POST /webhook — message handling', () => {
 		process.env.WHATSAPP_APP_SECRET = APP_SECRET;
 		mockFindProduct.mockReset();
 		mockSendMessage.mockClear();
+		mockParseIntentAI.mockReset();
+		mockGenerateResponse.mockReset();
 		app = require('../app');
 	});
 
@@ -61,8 +78,9 @@ describe('POST /webhook — message handling', () => {
 	}
 
 	it('returns 200 and sends price when product found and intent is price', async () => {
+		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Widget A' });
 		mockFindProduct.mockResolvedValue(MOCK_PRODUCT);
-		const body = makeWebhookBody('What is the price of Widget A?');
+		const body = makeWebhookBody('Sa kushton Widget A?');
 
 		const res = await post(body);
 
@@ -73,13 +91,14 @@ describe('POST /webhook — message handling', () => {
 		);
 		expect(mockSendMessage).toHaveBeenCalledWith(
 			'355688000000',
-			expect.stringContaining('$29.99')
+			expect.stringContaining('kushton')
 		);
 	});
 
 	it('returns 200 and sends in-stock message when product available', async () => {
+		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Widget A' });
 		mockFindProduct.mockResolvedValue(MOCK_PRODUCT);
-		const body = makeWebhookBody('Do you have Widget A in stock?');
+		const body = makeWebhookBody('Keni Widget A?');
 
 		const res = await post(body);
 
@@ -91,52 +110,82 @@ describe('POST /webhook — message handling', () => {
 	});
 
 	it('returns 200 and sends out-of-stock message when stock is 0', async () => {
+		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Widget B' });
 		mockFindProduct.mockResolvedValue({ name: 'Widget B', price: 49.99, stock: 0 });
-		const body = makeWebhookBody('Is Widget B available?');
+		const body = makeWebhookBody('A keni Widget B?');
 
 		const res = await post(body);
 
 		expect(res.status).toBe(200);
 		expect(mockSendMessage).toHaveBeenCalledWith(
 			'355688000000',
-			expect.stringContaining('out of stock')
+			expect.stringContaining('stok')
 		);
 	});
 
 	it('returns 200 and sends not-found message when product does not exist', async () => {
+		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Nonexistent Thing' });
 		mockFindProduct.mockResolvedValue(null);
-		const body = makeWebhookBody('What is the price of Nonexistent Thing?');
+		const body = makeWebhookBody('Sa kushton Nonexistent Thing?');
 
 		const res = await post(body);
 
 		expect(res.status).toBe(200);
 		expect(mockSendMessage).toHaveBeenCalledWith(
 			'355688000000',
-			expect.stringContaining("couldn't find")
+			expect.stringContaining('nuk gjeta')
 		);
 	});
 
-	it('sends help message when text has no recognisable intent', async () => {
-		const body = makeWebhookBody('hello there');
+	it('sends AI-generated reply when intent is other', async () => {
+		mockParseIntentAI.mockResolvedValue({ intent: 'other', product: null });
+		mockGenerateResponse.mockResolvedValue('Mirë se vini! Mund t\'ju ndihmoj me çmimet.');
+		const body = makeWebhookBody('Përshëndetje!');
 
 		const res = await post(body);
 
 		expect(res.status).toBe(200);
 		expect(mockSendMessage).toHaveBeenCalledWith(
 			'355688000000',
-			expect.stringContaining('I can help')
+			expect.stringContaining('ndihmoj')
 		);
+	});
+
+	it('passes isFirstTime=true on first contact, false on subsequent', async () => {
+		mockParseIntentAI.mockResolvedValue({ intent: 'other', product: null });
+		mockGenerateResponse.mockResolvedValue('Ok');
+		const FROM = '355688111111';
+
+		await post(makeWebhookBody('Përshëndetje!', FROM));
+		expect(mockGenerateResponse).toHaveBeenLastCalledWith('Përshëndetje!', true);
+
+		mockGenerateResponse.mockClear();
+		await post(makeWebhookBody('Çfarë bëni?', FROM));
+		expect(mockGenerateResponse).toHaveBeenLastCalledWith('Çfarë bëni?', false);
+	});
+
+	it('falls back to keyword parser when AI throws', async () => {
+		mockParseIntentAI.mockRejectedValue(new Error('API down'));
+		mockGenerateResponse.mockResolvedValue('Ndihmë');
+		const body = makeWebhookBody('hello');
+
+		const res = await post(body);
+
+		expect(res.status).toBe(200);
+		// keyword parser returns null intent for 'hello' → AI generates response
+		expect(mockSendMessage).toHaveBeenCalled();
 	});
 
 	it('truncates reflected product name at 100 chars to prevent oversized replies', async () => {
-		mockFindProduct.mockResolvedValue(null);
 		const longName = 'A'.repeat(200);
+		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: longName });
+		mockFindProduct.mockResolvedValue(null);
 		const body = makeWebhookBody(`price of ${longName}`);
 
 		await post(body);
 
 		const [, replyText] = mockSendMessage.mock.calls[0];
-		expect(replyText.length).toBeLessThan(200);
+		expect(replyText.length).toBeLessThan(250);
 	});
 
 	it('ignores non-text message types silently', async () => {

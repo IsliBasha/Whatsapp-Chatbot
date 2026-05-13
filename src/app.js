@@ -7,10 +7,16 @@ const crypto = require('crypto');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { parseIntent } = require('./intentParser');
-const { findProduct } = require('./db');
+const { parseIntentAI, generateResponse } = require('./ai');
+const { hasBeenGreeted, markGreeted } = require('./session');
+const { findProduct, isReady, productCount } = require('./db');
 const { sendMessage } = require('./whatsapp');
 
 const app = express();
+
+// Trust the first proxy hop (ngrok / reverse proxy) so express-rate-limit
+// reads the real client IP from X-Forwarded-For instead of rejecting the header.
+app.set('trust proxy', 1);
 
 // Capture raw body buffer for HMAC verification before JSON parsing
 app.use(express.json({
@@ -40,13 +46,31 @@ function verifyMetaSignature(req) {
 	return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
 }
 
+/**
+ * verifyToken
+ * Timing-safe comparison for the Meta webhook verify token.
+ */
+function verifyToken(provided, expected) {
+	if (!provided || !expected) return false;
+	if (provided.length !== expected.length) return false;
+	return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+}
+
+// GET /health - Readiness probe
+app.get('/health', (_req, res) => {
+	if (!isReady()) {
+		return res.status(503).json({ status: 'unavailable', message: 'Product catalogue not loaded' });
+	}
+	res.json({ status: 'ok', products: productCount() });
+});
+
 // GET /webhook - Meta verification endpoint
 app.get('/webhook', (req, res) => {
 	try {
 		const mode = req.query['hub.mode'];
 		const token = req.query['hub.verify_token'];
 		const challenge = req.query['hub.challenge'];
-		if (mode === 'subscribe' && token && token === process.env.VERIFY_TOKEN) {
+		if (mode === 'subscribe' && verifyToken(token, process.env.VERIFY_TOKEN)) {
 			return res.status(200).send(challenge);
 		}
 		return res.sendStatus(403);
@@ -86,36 +110,53 @@ app.post('/webhook', webhookLimiter, async (req, res) => {
 		const body = msg.text && msg.text.body ? String(msg.text.body) : '';
 		if (!from || !body) return;
 
-		const { intent, product } = parseIntent(body);
-		if (!intent || !product) {
-			const help = [
-				'Hi! I can help with product prices and availability.',
-				'Try asking:',
-				'- What is the price of Widget A?',
-				'- Do you have Gadget Pro in stock?'
-			].join('\n');
-			await sendMessage(from, help);
+		// AI parses intent from any phrasing; keyword parser is the error fallback
+		let intent, product;
+		try {
+			({ intent, product } = await parseIntentAI(body));
+		} catch (_aiErr) {
+			console.error('AI parse failed:', _aiErr.message || _aiErr);
+			({ intent, product } = parseIntent(body));
+		}
+
+		// If AI returned 'other' but still extracted a product name, treat as price query
+		if (intent === 'other' && product) intent = 'price';
+
+		// Greetings, general questions, or anything non-product → AI replies freely
+		if (intent === 'other' || !intent || !product) {
+			const firstTime = !hasBeenGreeted(from);
+			markGreeted(from);
+			let reply;
+			try {
+				reply = await generateResponse(body, firstTime);
+			} catch (_err) {
+				reply = firstTime
+					? 'Përshëndetje! Mund t\'ju ndihmoj me çmimet dhe disponibilitetin e produkteve.\nProboni: Sa kushton Luna?'
+					: 'Mund t\'ju ndihmoj me çmimet dhe disponibilitetin e produkteve.';
+			}
+			await sendMessage(from, reply);
 			return;
 		}
+		markGreeted(from);
 
 		const found = await findProduct(product);
 		if (!found) {
 			const MAX_DISPLAY = 100;
 			const display = product.length > MAX_DISPLAY ? product.slice(0, MAX_DISPLAY) + '…' : product;
-			await sendMessage(from, `Sorry, I couldn't find any product matching "${display}".`);
+			await sendMessage(from, `Na vjen keq, nuk gjeta asnjë produkt që përputhet me "${display}".`);
 			return;
 		}
 
 		if (intent === 'price') {
-			const price = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(found.price);
-			await sendMessage(from, `${found.name} costs ${price}.`);
+			const price = new Intl.NumberFormat('sq-AL', { style: 'currency', currency: 'ALL' }).format(found.price);
+			await sendMessage(from, `${found.name} kushton ${price}.`);
 			return;
 		}
 
 		if (intent === 'availability') {
 			const statusMsg = found.stock > 0
-				? `${found.name} is in stock with ${found.stock} units available.`
-				: `${found.name} is currently out of stock.`;
+				? `${found.name} është në magazinë me ${found.stock} njësi të disponueshme.`
+				: `${found.name} aktualisht nuk është në stok.`;
 			await sendMessage(from, statusMsg);
 			return;
 		}
