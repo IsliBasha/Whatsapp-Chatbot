@@ -139,7 +139,6 @@ async function loadProducts() {
 	}
 
 	await swapProducts(loaded);
-	console.log(`Loaded ${products.length} products from ${PRODUCTS_FILE}`);
 }
 
 /**
