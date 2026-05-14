@@ -153,3 +153,93 @@ Logs are rotated automatically by pm2-logrotate (50 MB, 14-day retention).
 ## 8. Memory guard
 
 PM2 will auto-restart the process if RSS exceeds **512 MB** (configured in `ecosystem.config.js`).
+
+---
+
+## 9. Nginx + TLS
+
+Copy `deploy/nginx.conf.example` to the server, fill in your domain, then:
+
+```bash
+# Install nginx + certbot
+apt install -y nginx certbot python3-certbot-nginx
+
+# Copy config
+cp deploy/nginx.conf.example /etc/nginx/sites-available/whatsapp-bot
+nano /etc/nginx/sites-available/whatsapp-bot  # replace your-domain.com and <YOUR_MGMT_IP>
+ln -s /etc/nginx/sites-available/whatsapp-bot /etc/nginx/sites-enabled/
+
+# Obtain TLS certificate
+certbot --nginx -d your-domain.com
+
+# Verify and reload
+nginx -t && systemctl reload nginx
+```
+
+### Firewall
+
+```bash
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw enable
+```
+
+---
+
+## 10. Cutover playbook (ngrok → production)
+
+Follow these steps in order. Keep ngrok running until step 5 is confirmed.
+
+### Step 1 — Smoke-test the new server
+
+```bash
+# Readiness probe
+curl -s https://your-domain.com/health
+
+# Trigger a catalogue sync and check status
+curl -s -X POST https://your-domain.com/admin/reload \
+  -H "Authorization: Bearer $ADMIN_RELOAD_TOKEN"
+
+curl -s https://your-domain.com/admin/sync-status | jq .
+```
+
+Both calls must succeed before proceeding.
+
+### Step 2 — Update the Meta webhook URL
+
+1. Open [Meta App Dashboard](https://developers.facebook.com/apps/) → your app → WhatsApp → Configuration
+2. Set **Callback URL** to `https://your-domain.com/webhook`
+3. Set **Verify Token** to the value of `VERIFY_TOKEN` in your server `.env`
+4. Click **Verify and Save** — Meta will issue a `GET /webhook` challenge; the new server must respond `200`
+
+### Step 3 — Send a test message
+
+Send `Sa kushton Luna?` from a real WhatsApp number.
+Confirm you receive the correct Albanian price reply within a few seconds.
+
+### Step 4 — Confirm and decommission ngrok
+
+Only after Step 3 succeeds:
+
+```bash
+# On the dev machine — stop ngrok and remove it from startup
+pkill ngrok
+# Remove ngrok from ~/.bashrc / ~/.profile / systemd if you added it there
+```
+
+### Step 5 — Secure the .env on the server
+
+```bash
+chmod 600 /opt/whatsapp-bot/.env
+# Verify it is NOT tracked by git
+git -C /opt/whatsapp-bot ls-files .env  # must print nothing
+```
+
+### Rollback
+
+If production has issues before Step 4:
+
+1. Revert the Meta webhook URL back to the ngrok URL (App Dashboard → WhatsApp → Configuration)
+2. Meta will instantly route traffic back to ngrok
+3. Debug the new server without user impact
