@@ -5,9 +5,11 @@
 
 const app = require('./app');
 const { loadProducts } = require('./db');
+const { startScheduler } = require('./scheduler');
 
 async function start() {
 	await loadProducts();
+	if (process.env.SYNC_ENABLED !== 'false') startScheduler();
 	const port = Number(process.env.PORT || 3000);
 	app.listen(port, () => {
 		console.log(`WhatsApp bot listening on port ${port}`);
