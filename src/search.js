@@ -57,33 +57,54 @@ function searchProducts(products, query) {
 	return results.length > 0 ? results[0].item : null;
 }
 
+// Fuse.js score: 0 = perfect, 1 = no match. Lower threshold = stricter.
+const CONFIDENT_THRESHOLD = 0.2;  // high-confidence fuzzy → treat as real match
+const SUGGEST_THRESHOLD   = 0.42; // medium-confidence fuzzy → show as suggestion
+
 /**
  * searchCandidates
- * Returns ALL products matching the query, up to maxResults.
- * Pass 1: all substring matches (fast).
- * Pass 2: Fuse.js fuzzy fallback when no substring match.
+ * Returns { candidates, suggestions } where:
+ *   candidates — substring matches or high-confidence fuzzy (score ≤ CONFIDENT_THRESHOLD)
+ *   suggestions — only populated when candidates is empty; lower-confidence fuzzy matches
+ *                 to show as "did you mean?" (score ≤ SUGGEST_THRESHOLD), capped at 3
  *
  * @param {Array<{name:string, price:number, stock:number}>} products
  * @param {string} query
- * @param {number} maxResults
- * @returns {Array<{name:string, price:number, stock:number}>}
+ * @param {number} maxResults   cap for candidates list
+ * @returns {{ candidates: Product[], suggestions: Product[] }}
  */
 function searchCandidates(products, query, maxResults = 15) {
-	if (!query || !products.length) return [];
+	if (!query || !products.length) return { candidates: [], suggestions: [] };
 
 	const q = query.trim().toLowerCase();
 
+	// Pass 1 — all substring matches (high confidence)
 	const exact = products.filter(p => p.name.toLowerCase().includes(q));
-	if (exact.length > 0) return exact.slice(0, maxResults);
+	if (exact.length > 0) return { candidates: exact.slice(0, maxResults), suggestions: [] };
 
-	const fuse = new Fuse(products, {
+	// Pass 2 — tight Fuse.js (high-confidence fuzzy)
+	const fuseConfident = new Fuse(products, {
 		keys: ['name'],
-		threshold: 0.35,
+		threshold: CONFIDENT_THRESHOLD,
 		ignoreLocation: true,
 		minMatchCharLength: 2,
 		includeScore: true,
 	});
-	return fuse.search(q).slice(0, maxResults).map(r => r.item);
+	const confident = fuseConfident.search(q);
+	if (confident.length > 0) {
+		return { candidates: confident.slice(0, maxResults).map(r => r.item), suggestions: [] };
+	}
+
+	// Pass 3 — loose Fuse.js (suggestion zone only)
+	const fuseSuggest = new Fuse(products, {
+		keys: ['name'],
+		threshold: SUGGEST_THRESHOLD,
+		ignoreLocation: true,
+		minMatchCharLength: 2,
+		includeScore: true,
+	});
+	const suggestions = fuseSuggest.search(q).slice(0, 3).map(r => r.item);
+	return { candidates: [], suggestions };
 }
 
 module.exports = { searchProducts, searchCandidates };

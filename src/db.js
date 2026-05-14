@@ -154,7 +154,7 @@ async function findProduct(name) {
 }
 
 async function findCandidates(query, maxResults = 15) {
-	if (!query || typeof query !== 'string') return [];
+	if (!query || typeof query !== 'string') return { candidates: [], suggestions: [] };
 	return searchCandidates(products, query, maxResults);
 }
 

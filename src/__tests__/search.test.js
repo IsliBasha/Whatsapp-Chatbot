@@ -78,40 +78,76 @@ const LAMPS = [
 	{ name: 'Tel 1x1.5 mm Cu', price: 25, stock: 100 },
 ];
 
-describe('searchCandidates — all matches', () => {
-	it('returns all products containing the substring', () => {
-		const results = searchCandidates(LAMPS, 'llampe');
-		expect(results).toHaveLength(4);
-		expect(results.every(p => p.name.toLowerCase().includes('llampe'))).toBe(true);
+describe('searchCandidates — return shape', () => {
+	it('always returns { candidates, suggestions }', () => {
+		const result = searchCandidates(LAMPS, 'llampe');
+		expect(result).toHaveProperty('candidates');
+		expect(result).toHaveProperty('suggestions');
+	});
+});
+
+describe('searchCandidates — confident matches → candidates', () => {
+	it('populates candidates with all substring matches, suggestions empty', () => {
+		const { candidates, suggestions } = searchCandidates(LAMPS, 'llampe');
+		expect(candidates).toHaveLength(4);
+		expect(candidates.every(p => p.name.toLowerCase().includes('llampe'))).toBe(true);
+		expect(suggestions).toHaveLength(0);
 	});
 
-	it('returns empty array when nothing matches', () => {
-		expect(searchCandidates(LAMPS, 'makina')).toEqual([]);
+	it('populates candidates for high-confidence typo (llambe → Llampe)', () => {
+		const { candidates, suggestions } = searchCandidates(LAMPS, 'llambe led');
+		expect(candidates.length).toBeGreaterThan(0);
+		expect(candidates[0].name).toMatch(/Llampe/i);
+		expect(suggestions).toHaveLength(0);
 	});
 
-	it('returns empty array for empty query', () => {
-		expect(searchCandidates(LAMPS, '')).toEqual([]);
-	});
-
-	it('returns empty array for empty product list', () => {
-		expect(searchCandidates([], 'llampe')).toEqual([]);
-	});
-
-	it('respects the maxResults cap', () => {
+	it('respects the maxResults cap on candidates', () => {
 		const big = Array.from({ length: 20 }, (_, i) => ({ name: `Llampe ${i}`, price: i, stock: i }));
-		const results = searchCandidates(big, 'llampe', 5);
-		expect(results).toHaveLength(5);
+		const { candidates } = searchCandidates(big, 'llampe', 5);
+		expect(candidates).toHaveLength(5);
 	});
 
 	it('defaults cap to 15', () => {
 		const big = Array.from({ length: 20 }, (_, i) => ({ name: `Llampe ${i}`, price: i, stock: i }));
-		const results = searchCandidates(big, 'llampe');
-		expect(results).toHaveLength(15);
+		const { candidates } = searchCandidates(big, 'llampe');
+		expect(candidates).toHaveLength(15);
+	});
+});
+
+describe('searchCandidates — low-confidence → suggestions', () => {
+	it('returns suggestions (not candidates) for a loosely related query', () => {
+		// 'lamp' is not a substring and not a tight fuzzy match for Albanian product names,
+		// but may be in suggestion zone
+		const { candidates, suggestions } = searchCandidates(LAMPS, 'lamps 8w');
+		// Either suggestions or candidates may fire depending on score — what must NOT happen
+		// is both being empty when there is clearly a related product in the list
+		const totalHits = candidates.length + suggestions.length;
+		expect(totalHits).toBeGreaterThan(0);
 	});
 
-	it('falls back to Fuse.js for typo queries', () => {
-		const results = searchCandidates(LAMPS, 'llambe');
-		expect(results.length).toBeGreaterThan(0);
-		expect(results[0].name).toMatch(/Llampe/i);
+	it('returns both candidates and suggestions as arrays', () => {
+		const { candidates, suggestions } = searchCandidates(LAMPS, 'xyz99999');
+		expect(Array.isArray(candidates)).toBe(true);
+		expect(Array.isArray(suggestions)).toBe(true);
+	});
+});
+
+describe('searchCandidates — no match', () => {
+	it('returns empty candidates and suggestions for completely unrelated query', () => {
+		const { candidates, suggestions } = searchCandidates(LAMPS, 'makina sportive bmw');
+		expect(candidates).toHaveLength(0);
+		expect(suggestions).toHaveLength(0);
+	});
+
+	it('returns empty for empty query', () => {
+		const { candidates, suggestions } = searchCandidates(LAMPS, '');
+		expect(candidates).toHaveLength(0);
+		expect(suggestions).toHaveLength(0);
+	});
+
+	it('returns empty for empty product list', () => {
+		const { candidates, suggestions } = searchCandidates([], 'llampe');
+		expect(candidates).toHaveLength(0);
+		expect(suggestions).toHaveLength(0);
 	});
 });

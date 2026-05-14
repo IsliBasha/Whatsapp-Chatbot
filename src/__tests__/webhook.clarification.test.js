@@ -111,7 +111,7 @@ describe('clarification flow', () => {
 
 	it('sends a list of product names when multiple candidates found', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'llampe' });
-		mockFindCandidates.mockResolvedValue(CANDIDATES);
+		mockFindCandidates.mockResolvedValue({ candidates: CANDIDATES, suggestions: [] });
 
 		await post('sa kushton llampe');
 
@@ -123,7 +123,7 @@ describe('clarification flow', () => {
 
 	it('reply contains clarification prompt when multiple candidates', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'llampe' });
-		mockFindCandidates.mockResolvedValue(CANDIDATES);
+		mockFindCandidates.mockResolvedValue({ candidates: CANDIDATES, suggestions: [] });
 
 		await post('sa kushton llampe');
 
@@ -135,7 +135,7 @@ describe('clarification flow', () => {
 
 	it('returns price when user picks a product by name after clarification', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'llampe' });
-		mockFindCandidates.mockResolvedValue(CANDIDATES);
+		mockFindCandidates.mockResolvedValue({ candidates: CANDIDATES, suggestions: [] });
 		await post('sa kushton llampe');
 
 		mockSendMessage.mockClear();
@@ -152,7 +152,7 @@ describe('clarification flow', () => {
 
 	it('returns availability when intent was availability and user picks', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'llampe' });
-		mockFindCandidates.mockResolvedValue(CANDIDATES);
+		mockFindCandidates.mockResolvedValue({ candidates: CANDIDATES, suggestions: [] });
 		await post('a keni llampe');
 
 		mockSendMessage.mockClear();
@@ -169,7 +169,7 @@ describe('clarification flow', () => {
 
 	it('clears pending after successful selection so next message is a fresh query', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'llampe' });
-		mockFindCandidates.mockResolvedValue(CANDIDATES);
+		mockFindCandidates.mockResolvedValue({ candidates: CANDIDATES, suggestions: [] });
 		await post('sa kushton llampe');
 		mockSendMessage.mockClear();
 
@@ -177,7 +177,7 @@ describe('clarification flow', () => {
 		mockSendMessage.mockClear();
 
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'tel' });
-		mockFindCandidates.mockResolvedValue([{ name: 'Tel 1x1.5', price: 25, stock: 100 }]);
+		mockFindCandidates.mockResolvedValue({ candidates: [{ name: 'Tel 1x1.5', price: 25, stock: 100 }], suggestions: [] });
 		await post('sa kushton tel');
 
 		const [, reply] = mockSendMessage.mock.calls[0];
@@ -189,12 +189,12 @@ describe('clarification flow', () => {
 
 	it('treats unmatched reply as fresh query and clears pending', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'llampe' });
-		mockFindCandidates.mockResolvedValue(CANDIDATES);
+		mockFindCandidates.mockResolvedValue({ candidates: CANDIDATES, suggestions: [] });
 		await post('sa kushton llampe');
 
 		mockSendMessage.mockClear();
 		mockParseIntentAI.mockResolvedValue({ intent: 'other', product: null });
-		mockFindCandidates.mockResolvedValue([]);
+		mockFindCandidates.mockResolvedValue({ candidates: [], suggestions: [] });
 
 		await post('makina bmw');
 
@@ -207,7 +207,7 @@ describe('clarification flow', () => {
 
 	it('answers directly when only one candidate found', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Tel 1x1.5' });
-		mockFindCandidates.mockResolvedValue([{ name: 'Tel 1x1.5 mm Cu', price: 25, stock: 100 }]);
+		mockFindCandidates.mockResolvedValue({ candidates: [{ name: 'Tel 1x1.5 mm Cu', price: 25, stock: 100 }], suggestions: [] });
 
 		await post('sa kushton tel 1.5');
 
@@ -219,13 +219,46 @@ describe('clarification flow', () => {
 
 	// ── zero results → not-found ──────────────────────────────────────────────
 
-	it('sends not-found message when no candidates match', async () => {
+	it('sends not-found message when no candidates or suggestions match', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'gjëra imagjinare' });
-		mockFindCandidates.mockResolvedValue([]);
+		mockFindCandidates.mockResolvedValue({ candidates: [], suggestions: [] });
 
 		await post('sa kushton gjëra imagjinare');
 
 		const [, reply] = mockSendMessage.mock.calls[0];
 		expect(reply).toMatch(/nuk gjeta/i);
+	});
+
+	// ── low-confidence match → suggestion ────────────────────────────────────
+
+	it('sends a "did you mean" suggestion when only low-confidence matches exist', async () => {
+		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'tel 40' });
+		mockFindCandidates.mockResolvedValue({
+			candidates: [],
+			suggestions: [{ name: 'Tel 1x4mm Cu (bobine)', price: 320, stock: 50 }],
+		});
+
+		await post('sa kushton tel 40');
+
+		const [, reply] = mockSendMessage.mock.calls[0];
+		expect(reply).toMatch(/Tel 1x4mm/);
+		expect(reply).toMatch(/ndoshta|deshironi|keni ndermend/i);
+	});
+
+	it('suggestion also sets pending so user can confirm by typing the name', async () => {
+		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'tel 40' });
+		const SUGGESTION = { name: 'Tel 1x4mm Cu (bobine)', price: 320, stock: 50 };
+		mockFindCandidates.mockResolvedValue({ candidates: [], suggestions: [SUGGESTION] });
+		await post('sa kushton tel 40');
+
+		mockSendMessage.mockClear();
+		mockParseIntentAI.mockReset();
+
+		// User confirms by typing the product name
+		await post('Tel 1x4mm Cu (bobine)');
+
+		const [, reply] = mockSendMessage.mock.calls[0];
+		expect(reply).toMatch(/Tel 1x4mm Cu/);
+		expect(reply).toMatch(/kushton/);
 	});
 });

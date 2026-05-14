@@ -107,7 +107,7 @@ describe('Bot responses — Albanian language', () => {
 
 	it('sends price reply in Albanian', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Luna' });
-		mockFindCandidates.mockResolvedValue([{ name: 'B-Luna', price: 100, stock: 1000 }]);
+		mockFindCandidates.mockResolvedValue({ candidates: [{ name: 'B-Luna', price: 100, stock: 1000 }], suggestions: [] });
 		await post(makeWebhookBody('Sa kushton Luna?'));
 
 		const [, reply] = mockSendMessage.mock.calls[0];
@@ -117,7 +117,7 @@ describe('Bot responses — Albanian language', () => {
 
 	it('sends in-stock reply in Albanian', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Luna' });
-		mockFindCandidates.mockResolvedValue([{ name: 'B-Luna', price: 100, stock: 1000 }]);
+		mockFindCandidates.mockResolvedValue({ candidates: [{ name: 'B-Luna', price: 100, stock: 1000 }], suggestions: [] });
 		await post(makeWebhookBody('Keni Luna në magazinë?'));
 
 		const [, reply] = mockSendMessage.mock.calls[0];
@@ -126,7 +126,7 @@ describe('Bot responses — Albanian language', () => {
 
 	it('sends out-of-stock reply in Albanian', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Widget B' });
-		mockFindCandidates.mockResolvedValue([{ name: 'Widget B', price: 50, stock: 0 }]);
+		mockFindCandidates.mockResolvedValue({ candidates: [{ name: 'Widget B', price: 50, stock: 0 }], suggestions: [] });
 		await post(makeWebhookBody('Keni Widget B?'));
 
 		const [, reply] = mockSendMessage.mock.calls[0];
@@ -135,7 +135,7 @@ describe('Bot responses — Albanian language', () => {
 
 	it('sends not-found reply in Albanian', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Produkti XYZ' });
-		mockFindCandidates.mockResolvedValue([]);
+		mockFindCandidates.mockResolvedValue({ candidates: [], suggestions: [] });
 		await post(makeWebhookBody('Sa kushton Produkti XYZ?'));
 
 		const [, reply] = mockSendMessage.mock.calls[0];

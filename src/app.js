@@ -168,12 +168,22 @@ app.post('/webhook', webhookLimiter, async (req, res) => {
 		markGreeted(from);
 
 		// ── Step 3: find matching products ────────────────────────────────────
-		const candidates = await findCandidates(product);
+		const { candidates, suggestions } = await findCandidates(product);
 
-		if (candidates.length === 0) {
+		if (candidates.length === 0 && suggestions.length === 0) {
 			const MAX_DISPLAY = 100;
 			const display = product.length > MAX_DISPLAY ? product.slice(0, MAX_DISPLAY) + '…' : product;
 			await sendMessage(from, `Na vjen keq, nuk gjeta asnjë produkt që përputhet me "${display}".`);
+			return;
+		}
+
+		if (candidates.length === 0 && suggestions.length > 0) {
+			// Low-confidence match — show as "did you mean?" and store pending
+			setPendingClarification(from, { candidates: suggestions, intent });
+			const list = suggestions.map(p => `• ${p.name}`).join('\n');
+			const MAX_DISPLAY = 100;
+			const display = product.length > MAX_DISPLAY ? product.slice(0, MAX_DISPLAY) + '…' : product;
+			await sendMessage(from, `Nuk gjeta "${display}", por ndoshta keni ndërmend:\n\n${list}\n\nNëse po, shkruani emrin e produktit.`);
 			return;
 		}
 
@@ -182,7 +192,7 @@ app.post('/webhook', webhookLimiter, async (req, res) => {
 			return;
 		}
 
-		// Multiple matches — ask the user to pick
+		// Multiple confident matches — ask the user to pick
 		setPendingClarification(from, { candidates, intent });
 		const list = candidates.map(p => `• ${p.name}`).join('\n');
 		await sendMessage(from, `Gjeta ${candidates.length} produkte. Cili ju intereson?\n\n${list}`);

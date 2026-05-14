@@ -85,7 +85,7 @@ describe('POST /webhook — message handling', () => {
 
 	it('returns 200 and sends price when product found and intent is price', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Widget A' });
-		mockFindCandidates.mockResolvedValue([MOCK_PRODUCT]);
+		mockFindCandidates.mockResolvedValue({ candidates: [MOCK_PRODUCT], suggestions: [] });
 		const body = makeWebhookBody('Sa kushton Widget A?');
 
 		const res = await post(body);
@@ -103,7 +103,7 @@ describe('POST /webhook — message handling', () => {
 
 	it('returns 200 and sends in-stock message when product available', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Widget A' });
-		mockFindCandidates.mockResolvedValue([MOCK_PRODUCT]);
+		mockFindCandidates.mockResolvedValue({ candidates: [MOCK_PRODUCT], suggestions: [] });
 		const body = makeWebhookBody('Keni Widget A?');
 
 		const res = await post(body);
@@ -117,7 +117,7 @@ describe('POST /webhook — message handling', () => {
 
 	it('returns 200 and sends out-of-stock message when stock is 0', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Widget B' });
-		mockFindCandidates.mockResolvedValue([{ name: 'Widget B', price: 49.99, stock: 0 }]);
+		mockFindCandidates.mockResolvedValue({ candidates: [{ name: 'Widget B', price: 49.99, stock: 0 }], suggestions: [] });
 		const body = makeWebhookBody('A keni Widget B?');
 
 		const res = await post(body);
@@ -131,7 +131,7 @@ describe('POST /webhook — message handling', () => {
 
 	it('returns 200 and sends not-found message when product does not exist', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Nonexistent Thing' });
-		mockFindCandidates.mockResolvedValue([]);
+		mockFindCandidates.mockResolvedValue({ candidates: [], suggestions: [] });
 		const body = makeWebhookBody('Sa kushton Nonexistent Thing?');
 
 		const res = await post(body);
@@ -185,7 +185,7 @@ describe('POST /webhook — message handling', () => {
 	it('truncates reflected product name at 100 chars to prevent oversized replies', async () => {
 		const longName = 'A'.repeat(200);
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: longName });
-		mockFindCandidates.mockResolvedValue([]);
+		mockFindCandidates.mockResolvedValue({ candidates: [], suggestions: [] });
 		const body = makeWebhookBody(`price of ${longName}`);
 
 		await post(body);
