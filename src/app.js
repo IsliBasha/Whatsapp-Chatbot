@@ -10,6 +10,7 @@ const { parseIntent } = require('./intentParser');
 const { parseIntentAI, generateResponse } = require('./ai');
 const { hasBeenGreeted, markGreeted } = require('./session');
 const { findProduct, isReady, productCount } = require('./db');
+const { runSync, getSyncStatus } = require('./sync');
 const { sendMessage } = require('./whatsapp');
 
 const app = express();
@@ -163,6 +164,51 @@ app.post('/webhook', webhookLimiter, async (req, res) => {
 	} catch (err) {
 		console.error('Error handling webhook message:', err.message);
 	}
+});
+
+const adminLimiter = rateLimit({
+	windowMs: 60_000,
+	max: 6,
+	standardHeaders: true,
+	legacyHeaders: false,
+	message: { error: 'Too many requests.' },
+});
+
+// Hash both sides so timingSafeEqual always compares 32-byte buffers,
+// eliminating any length-based timing leak.
+function verifyAdminToken(provided) {
+	const expected = process.env.ADMIN_RELOAD_TOKEN;
+	if (!provided || !expected) return false;
+	const a = crypto.createHash('sha256').update(provided).digest();
+	const b = crypto.createHash('sha256').update(expected).digest();
+	return crypto.timingSafeEqual(a, b);
+}
+
+function requireAdminConfigured(_req, res, next) {
+	if (!process.env.ADMIN_RELOAD_TOKEN) {
+		return res.status(503).json({ error: 'Admin endpoints not configured.' });
+	}
+	next();
+}
+
+// POST /admin/reload — trigger an immediate catalogue sync
+app.post('/admin/reload', adminLimiter, requireAdminConfigured, (req, res) => {
+	const auth  = req.headers['authorization'] || '';
+	const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+	if (!verifyAdminToken(token)) {
+		return res.status(403).json({ error: 'Forbidden.' });
+	}
+	res.status(202).json({ status: 'queued' });
+	runSync();
+});
+
+// GET /admin/sync-status — inspect last sync result and catalogue state
+app.get('/admin/sync-status', adminLimiter, requireAdminConfigured, (_req, res) => {
+	res.json({
+		...getSyncStatus(),
+		isReady:      isReady(),
+		productCount: productCount(),
+	});
 });
 
 module.exports = app;
