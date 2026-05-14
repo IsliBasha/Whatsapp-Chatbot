@@ -8,7 +8,7 @@
 require('dotenv').config();
 const path = require('path');
 const ExcelJS = require('exceljs');
-const { searchProducts } = require('./search');
+const { searchProducts, searchCandidates } = require('./search');
 
 const PRODUCTS_FILE = process.env.PRODUCTS_FILE
 	? path.resolve(process.env.PRODUCTS_FILE)
@@ -153,8 +153,13 @@ async function findProduct(name) {
 	return searchProducts(products, name);
 }
 
+async function findCandidates(query, maxResults = 15) {
+	if (!query || typeof query !== 'string') return [];
+	return searchCandidates(products, query, maxResults);
+}
+
 // NOTE: loadProducts() is intentionally NOT called here.
 // Call it explicitly from the server entrypoint (index.js) before app.listen(),
 // so the server never accepts traffic before the product catalogue is ready.
 
-module.exports = { findProduct, loadProducts, swapProducts, isReady, productCount, getLastReloadedAt };
+module.exports = { findProduct, findCandidates, loadProducts, swapProducts, isReady, productCount, getLastReloadedAt };

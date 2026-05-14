@@ -8,8 +8,9 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { parseIntent } = require('./intentParser');
 const { parseIntentAI, generateResponse } = require('./ai');
-const { hasBeenGreeted, markGreeted } = require('./session');
-const { findProduct, isReady, productCount } = require('./db');
+const { hasBeenGreeted, markGreeted, getPendingClarification, setPendingClarification, clearPendingClarification } = require('./session');
+const { findCandidates, isReady, productCount } = require('./db');
+const { searchProducts } = require('./search');
 const { runSync, getSyncStatus } = require('./sync');
 const { sendMessage } = require('./whatsapp');
 
@@ -80,6 +81,19 @@ app.get('/webhook', (req, res) => {
 	}
 });
 
+function sendProductReply(from, product, intent) {
+	if (intent === 'price') {
+		const price = new Intl.NumberFormat('sq-AL', { style: 'currency', currency: 'ALL' }).format(product.price);
+		return sendMessage(from, `${product.name} kushton ${price}.`);
+	}
+	if (intent === 'availability') {
+		const msg = product.stock > 0
+			? `${product.name} është në magazinë me ${product.stock} njësi të disponueshme.`
+			: `${product.name} aktualisht nuk është në stok.`;
+		return sendMessage(from, msg);
+	}
+}
+
 const webhookLimiter = rateLimit({
 	windowMs: 60_000,
 	max: Number(process.env.RATE_LIMIT_MAX || 60),
@@ -111,7 +125,20 @@ app.post('/webhook', webhookLimiter, async (req, res) => {
 		const body = msg.text && msg.text.body ? String(msg.text.body) : '';
 		if (!from || !body) return;
 
-		// AI parses intent from any phrasing; keyword parser is the error fallback
+		// ── Step 1: resolve a pending clarification if one exists ────────────────
+		const pending = getPendingClarification(from);
+		if (pending) {
+			clearPendingClarification(from);
+			const match = searchProducts(pending.candidates, body);
+			if (match) {
+				markGreeted(from);
+				await sendProductReply(from, match, pending.intent);
+				return;
+			}
+			// No match in candidate list — fall through to fresh query
+		}
+
+		// ── Step 2: parse intent (AI primary, keyword fallback) ───────────────
 		let intent, product;
 		try {
 			({ intent, product } = await parseIntentAI(body));
@@ -140,27 +167,25 @@ app.post('/webhook', webhookLimiter, async (req, res) => {
 		}
 		markGreeted(from);
 
-		const found = await findProduct(product);
-		if (!found) {
+		// ── Step 3: find matching products ────────────────────────────────────
+		const candidates = await findCandidates(product);
+
+		if (candidates.length === 0) {
 			const MAX_DISPLAY = 100;
 			const display = product.length > MAX_DISPLAY ? product.slice(0, MAX_DISPLAY) + '…' : product;
 			await sendMessage(from, `Na vjen keq, nuk gjeta asnjë produkt që përputhet me "${display}".`);
 			return;
 		}
 
-		if (intent === 'price') {
-			const price = new Intl.NumberFormat('sq-AL', { style: 'currency', currency: 'ALL' }).format(found.price);
-			await sendMessage(from, `${found.name} kushton ${price}.`);
+		if (candidates.length === 1) {
+			await sendProductReply(from, candidates[0], intent);
 			return;
 		}
 
-		if (intent === 'availability') {
-			const statusMsg = found.stock > 0
-				? `${found.name} është në magazinë me ${found.stock} njësi të disponueshme.`
-				: `${found.name} aktualisht nuk është në stok.`;
-			await sendMessage(from, statusMsg);
-			return;
-		}
+		// Multiple matches — ask the user to pick
+		setPendingClarification(from, { candidates, intent });
+		const list = candidates.map(p => `• ${p.name}`).join('\n');
+		await sendMessage(from, `Gjeta ${candidates.length} produkte. Cili ju intereson?\n\n${list}`);
 	} catch (err) {
 		console.error('Error handling webhook message:', err.message);
 	}

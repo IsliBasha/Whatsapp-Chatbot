@@ -57,4 +57,33 @@ function searchProducts(products, query) {
 	return results.length > 0 ? results[0].item : null;
 }
 
-module.exports = { searchProducts };
+/**
+ * searchCandidates
+ * Returns ALL products matching the query, up to maxResults.
+ * Pass 1: all substring matches (fast).
+ * Pass 2: Fuse.js fuzzy fallback when no substring match.
+ *
+ * @param {Array<{name:string, price:number, stock:number}>} products
+ * @param {string} query
+ * @param {number} maxResults
+ * @returns {Array<{name:string, price:number, stock:number}>}
+ */
+function searchCandidates(products, query, maxResults = 15) {
+	if (!query || !products.length) return [];
+
+	const q = query.trim().toLowerCase();
+
+	const exact = products.filter(p => p.name.toLowerCase().includes(q));
+	if (exact.length > 0) return exact.slice(0, maxResults);
+
+	const fuse = new Fuse(products, {
+		keys: ['name'],
+		threshold: 0.35,
+		ignoreLocation: true,
+		minMatchCharLength: 2,
+		includeScore: true,
+	});
+	return fuse.search(q).slice(0, maxResults).map(r => r.item);
+}
+
+module.exports = { searchProducts, searchCandidates };

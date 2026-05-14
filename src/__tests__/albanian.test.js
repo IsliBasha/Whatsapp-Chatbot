@@ -50,12 +50,12 @@ describe('parseIntent — Albanian availability keywords', () => {
 
 // ─── Response messages — Albanian ─────────────────────────────────────────────
 
-const mockFindProduct = jest.fn();
+const mockFindCandidates = jest.fn();
 jest.mock('../db', () => ({
-	findProduct: (...args) => mockFindProduct(...args),
-	loadProducts: jest.fn(),
-	isReady: jest.fn().mockReturnValue(true),
-	productCount: jest.fn().mockReturnValue(10)
+	findCandidates: (...args) => mockFindCandidates(...args),
+	loadProducts:   jest.fn(),
+	isReady:        jest.fn().mockReturnValue(true),
+	productCount:   jest.fn().mockReturnValue(10),
 }));
 
 const mockSendMessage = jest.fn().mockResolvedValue(undefined);
@@ -90,7 +90,7 @@ describe('Bot responses — Albanian language', () => {
 		jest.resetModules();
 		process.env.WHATSAPP_APP_SECRET = APP_SECRET;
 		process.env.RATE_LIMIT_MAX = '100';
-		mockFindProduct.mockReset();
+		mockFindCandidates.mockReset();
 		mockSendMessage.mockClear();
 		mockParseIntentAI.mockReset();
 		mockGenerateResponse.mockReset();
@@ -107,7 +107,7 @@ describe('Bot responses — Albanian language', () => {
 
 	it('sends price reply in Albanian', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Luna' });
-		mockFindProduct.mockResolvedValue({ name: 'B-Luna', price: 100, stock: 1000 });
+		mockFindCandidates.mockResolvedValue([{ name: 'B-Luna', price: 100, stock: 1000 }]);
 		await post(makeWebhookBody('Sa kushton Luna?'));
 
 		const [, reply] = mockSendMessage.mock.calls[0];
@@ -117,7 +117,7 @@ describe('Bot responses — Albanian language', () => {
 
 	it('sends in-stock reply in Albanian', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Luna' });
-		mockFindProduct.mockResolvedValue({ name: 'B-Luna', price: 100, stock: 1000 });
+		mockFindCandidates.mockResolvedValue([{ name: 'B-Luna', price: 100, stock: 1000 }]);
 		await post(makeWebhookBody('Keni Luna në magazinë?'));
 
 		const [, reply] = mockSendMessage.mock.calls[0];
@@ -126,7 +126,7 @@ describe('Bot responses — Albanian language', () => {
 
 	it('sends out-of-stock reply in Albanian', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Widget B' });
-		mockFindProduct.mockResolvedValue({ name: 'Widget B', price: 50, stock: 0 });
+		mockFindCandidates.mockResolvedValue([{ name: 'Widget B', price: 50, stock: 0 }]);
 		await post(makeWebhookBody('Keni Widget B?'));
 
 		const [, reply] = mockSendMessage.mock.calls[0];
@@ -135,7 +135,7 @@ describe('Bot responses — Albanian language', () => {
 
 	it('sends not-found reply in Albanian', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Produkti XYZ' });
-		mockFindProduct.mockResolvedValue(null);
+		mockFindCandidates.mockResolvedValue([]);
 		await post(makeWebhookBody('Sa kushton Produkti XYZ?'));
 
 		const [, reply] = mockSendMessage.mock.calls[0];

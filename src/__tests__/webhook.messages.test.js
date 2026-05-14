@@ -8,10 +8,12 @@ const request = require('supertest');
 const APP_SECRET = 'test-secret';
 const MOCK_PRODUCT = { name: 'Widget A', price: 29.99, stock: 150 };
 
-const mockFindProduct = jest.fn();
+const mockFindCandidates = jest.fn();
 jest.mock('../db', () => ({
-	findProduct: (...args) => mockFindProduct(...args),
-	loadProducts: jest.fn()
+	findCandidates: (...args) => mockFindCandidates(...args),
+	isReady:        jest.fn().mockReturnValue(true),
+	productCount:   jest.fn().mockReturnValue(3000),
+	loadProducts:   jest.fn(),
 }));
 
 const mockSendMessage = jest.fn().mockResolvedValue(undefined);
@@ -28,9 +30,13 @@ jest.mock('../ai', () => ({
 
 jest.mock('../session', () => {
 	const greeted = new Set();
+	const pending = new Map();
 	return {
-		hasBeenGreeted: (p) => greeted.has(p),
-		markGreeted: (p) => greeted.add(p)
+		hasBeenGreeted:           (p) => greeted.has(p),
+		markGreeted:              (p) => greeted.add(p),
+		getPendingClarification:  (p) => pending.get(p) || null,
+		setPendingClarification:  (p, d) => pending.set(p, d),
+		clearPendingClarification:(p) => pending.delete(p),
 	};
 });
 
@@ -61,7 +67,7 @@ describe('POST /webhook — message handling', () => {
 	beforeEach(() => {
 		jest.resetModules();
 		process.env.WHATSAPP_APP_SECRET = APP_SECRET;
-		mockFindProduct.mockReset();
+		mockFindCandidates.mockReset();
 		mockSendMessage.mockClear();
 		mockParseIntentAI.mockReset();
 		mockGenerateResponse.mockReset();
@@ -79,7 +85,7 @@ describe('POST /webhook — message handling', () => {
 
 	it('returns 200 and sends price when product found and intent is price', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Widget A' });
-		mockFindProduct.mockResolvedValue(MOCK_PRODUCT);
+		mockFindCandidates.mockResolvedValue([MOCK_PRODUCT]);
 		const body = makeWebhookBody('Sa kushton Widget A?');
 
 		const res = await post(body);
@@ -97,7 +103,7 @@ describe('POST /webhook — message handling', () => {
 
 	it('returns 200 and sends in-stock message when product available', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Widget A' });
-		mockFindProduct.mockResolvedValue(MOCK_PRODUCT);
+		mockFindCandidates.mockResolvedValue([MOCK_PRODUCT]);
 		const body = makeWebhookBody('Keni Widget A?');
 
 		const res = await post(body);
@@ -111,7 +117,7 @@ describe('POST /webhook — message handling', () => {
 
 	it('returns 200 and sends out-of-stock message when stock is 0', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'availability', product: 'Widget B' });
-		mockFindProduct.mockResolvedValue({ name: 'Widget B', price: 49.99, stock: 0 });
+		mockFindCandidates.mockResolvedValue([{ name: 'Widget B', price: 49.99, stock: 0 }]);
 		const body = makeWebhookBody('A keni Widget B?');
 
 		const res = await post(body);
@@ -125,7 +131,7 @@ describe('POST /webhook — message handling', () => {
 
 	it('returns 200 and sends not-found message when product does not exist', async () => {
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: 'Nonexistent Thing' });
-		mockFindProduct.mockResolvedValue(null);
+		mockFindCandidates.mockResolvedValue([]);
 		const body = makeWebhookBody('Sa kushton Nonexistent Thing?');
 
 		const res = await post(body);
@@ -179,7 +185,7 @@ describe('POST /webhook — message handling', () => {
 	it('truncates reflected product name at 100 chars to prevent oversized replies', async () => {
 		const longName = 'A'.repeat(200);
 		mockParseIntentAI.mockResolvedValue({ intent: 'price', product: longName });
-		mockFindProduct.mockResolvedValue(null);
+		mockFindCandidates.mockResolvedValue([]);
 		const body = makeWebhookBody(`price of ${longName}`);
 
 		await post(body);
